@@ -457,28 +457,36 @@ func main() {
 			return
 		}
 		examplePath := filepath.Join(wd, "config.example.yaml")
+		var environmentConfig []byte
 		if environmentConfigPath := strings.TrimSpace(os.Getenv("CLI_PROXY_ENV_CONFIG_PATH")); environmentConfigPath != "" {
+			var errEnvironmentConfig error
+			environmentConfig, errEnvironmentConfig = readEnvironmentConfig(environmentConfigPath, os.Getenv("CLI_PROXY_PORT"))
+			if errEnvironmentConfig != nil {
+				log.Errorf("failed to load environment configuration: %v", errEnvironmentConfig)
+				return
+			}
 			examplePath = environmentConfigPath
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-		// The stored configuration is authoritative. Environment YAML is only a
-		// seed for an empty database; explicit field overrides are applied under
-		// the same row lock as the database read, never to a stale local mirror.
-		errBootstrap := pgStoreInst.BootstrapWithConfigTransform(ctx, examplePath, func(data []byte) ([]byte, error) {
-			return applyEnvironmentConfig(data, os.Getenv("CLI_PROXY_PORT"), os.Getenv("CLI_PROXY_API_KEYS_JSON"))
-		})
-		cancel()
-		if errBootstrap != nil {
+		if errBootstrap := pgStoreInst.Bootstrap(ctx, examplePath); errBootstrap != nil {
+			cancel()
 			log.Errorf("failed to bootstrap postgres-backed config: %v", errBootstrap)
 			return
+		}
+		cancel()
+		if len(environmentConfig) > 0 {
+			ctxPersist, cancelPersist := context.WithTimeout(context.Background(), 30*time.Second)
+			errPersist := persistEnvironmentConfig(ctxPersist, pgStoreInst, environmentConfig)
+			cancelPersist()
+			if errPersist != nil {
+				log.Errorf("failed to sync environment configuration to postgres: %v", errPersist)
+				return
+			}
 		}
 		configFilePath = pgStoreInst.ConfigPath()
 		cfg, err = config.LoadConfigOptional(configFilePath, isCloudDeploy)
 		if err == nil {
 			cfg.AuthDir = pgStoreInst.AuthDir()
-			if strings.TrimSpace(os.Getenv("CLI_PROXY_API_KEYS_JSON")) != "" {
-				log.Info("client API keys loaded from CLI_PROXY_API_KEYS_JSON")
-			}
 			log.Infof("postgres-backed token store enabled, workspace path: %s", pgStoreInst.WorkDir())
 		}
 	} else if useObjectStore {

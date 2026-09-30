@@ -10,7 +10,6 @@ if [ -z "${MANAGEMENT_PASSWORD:-}" ]; then
   exit 1
 fi
 
-# PostgreSQL uses this file only as a seed when no stored configuration exists.
 if [ -n "${CLI_PROXY_CONFIG_B64:-}" ]; then
   if ! printf '%s' "$CLI_PROXY_CONFIG_B64" | base64 -d > /CLIProxyAPI/config.yaml; then
     echo 'CLI_PROXY_CONFIG_B64 is not valid Base64.' >&2

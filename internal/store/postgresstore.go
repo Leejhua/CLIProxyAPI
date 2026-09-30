@@ -14,6 +14,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
@@ -135,9 +136,6 @@ func (s *PostgresStore) EnsureSchema(ctx context.Context) error {
 	`, configTable)); err != nil {
 		return fmt.Errorf("postgres store: create config table: %w", err)
 	}
-	if err := s.ensureConfigHistory(ctx); err != nil {
-		return err
-	}
 	authTable := s.fullTableName(s.cfg.AuthTable)
 	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -168,17 +166,10 @@ func (s *PostgresStore) EnsureSchema(ctx context.Context) error {
 
 // Bootstrap synchronizes configuration and auth records between PostgreSQL and the local workspace.
 func (s *PostgresStore) Bootstrap(ctx context.Context, exampleConfigPath string) error {
-	return s.BootstrapWithConfigTransform(ctx, exampleConfigPath, nil)
-}
-
-// BootstrapWithConfigTransform uses the database configuration when present and
-// reads a local seed only when absent. The transform is validated and persisted
-// in the same transaction as the read, before writing the local mirror.
-func (s *PostgresStore) BootstrapWithConfigTransform(ctx context.Context, exampleConfigPath string, transform func([]byte) ([]byte, error)) error {
 	if err := s.EnsureSchema(ctx); err != nil {
 		return err
 	}
-	if err := s.syncConfigFromDatabase(ctx, exampleConfigPath, transform); err != nil {
+	if err := s.syncConfigFromDatabase(ctx, exampleConfigPath); err != nil {
 		return err
 	}
 	if err := s.syncAuthFromDatabase(ctx); err != nil {
@@ -450,63 +441,44 @@ func (s *PostgresStore) PersistConfig(ctx context.Context) error {
 	return s.persistConfig(ctx, data)
 }
 
-// syncConfigFromDatabase loads the authoritative database row and applies only
-// the caller's explicit overrides. Initialization never replaces an existing row.
-func (s *PostgresStore) syncConfigFromDatabase(ctx context.Context, exampleConfigPath string, transform func([]byte) ([]byte, error)) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("postgres store: begin config transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	table := s.fullTableName(s.cfg.ConfigTable)
-	query := fmt.Sprintf("SELECT content FROM %s WHERE id = $1 FOR UPDATE", table)
+// syncConfigFromDatabase writes the database-stored config to disk or seeds the database from template.
+func (s *PostgresStore) syncConfigFromDatabase(ctx context.Context, exampleConfigPath string) error {
+	query := fmt.Sprintf("SELECT content FROM %s WHERE id = $1", s.fullTableName(s.cfg.ConfigTable))
 	var content string
-	err = tx.QueryRowContext(ctx, query, defaultConfigKey).Scan(&content)
-	if errors.Is(err, sql.ErrNoRows) {
-		data, errRead := os.ReadFile(s.configPath)
-		if errors.Is(errRead, fs.ErrNotExist) {
+	err := s.db.QueryRowContext(ctx, query, defaultConfigKey).Scan(&content)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, errStat := os.Stat(s.configPath); errors.Is(errStat, fs.ErrNotExist) {
 			if exampleConfigPath != "" {
-				data, errRead = os.ReadFile(exampleConfigPath)
+				if errCopy := misc.CopyConfigTemplate(exampleConfigPath, s.configPath); errCopy != nil {
+					return fmt.Errorf("postgres store: copy example config: %w", errCopy)
+				}
 			} else {
-				data, errRead = []byte{}, nil
+				if errCreate := os.MkdirAll(filepath.Dir(s.configPath), 0o700); errCreate != nil {
+					return fmt.Errorf("postgres store: prepare config directory: %w", errCreate)
+				}
+				if errWrite := os.WriteFile(s.configPath, []byte{}, 0o600); errWrite != nil {
+					return fmt.Errorf("postgres store: create empty config: %w", errWrite)
+				}
 			}
 		}
+		data, errRead := os.ReadFile(s.configPath)
 		if errRead != nil {
-			return fmt.Errorf("postgres store: read initial config: %w", errRead)
+			return fmt.Errorf("postgres store: read local config: %w", errRead)
 		}
-		// Another process may have initialized the row after our SELECT.
-		// DO NOTHING and re-read its committed configuration instead of replacing it.
-		insert := fmt.Sprintf("INSERT INTO %s (id, content) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING", table)
-		if _, err = tx.ExecContext(ctx, insert, defaultConfigKey, normalizeLineEndings(string(data))); err != nil {
-			return fmt.Errorf("postgres store: seed config: %w", err)
+		if errPersist := s.persistConfig(ctx, data); errPersist != nil {
+			return errPersist
 		}
-		err = tx.QueryRowContext(ctx, query, defaultConfigKey).Scan(&content)
-	}
-	if err != nil {
+	case err != nil:
 		return fmt.Errorf("postgres store: load config from database: %w", err)
-	}
-	data := []byte(normalizeLineEndings(content))
-	if transform != nil {
-		data, err = transform(data)
-		if err != nil {
-			return fmt.Errorf("postgres store: apply config overrides: %w", err)
+	default:
+		if err = os.MkdirAll(filepath.Dir(s.configPath), 0o700); err != nil {
+			return fmt.Errorf("postgres store: prepare config directory: %w", err)
 		}
-	}
-	normalized := normalizeLineEndings(string(data))
-	if normalized != content {
-		update := fmt.Sprintf("UPDATE %s SET content = $2, updated_at = NOW() WHERE id = $1", table)
-		if _, err = tx.ExecContext(ctx, update, defaultConfigKey, normalized); err != nil {
-			return fmt.Errorf("postgres store: update config: %w", err)
+		normalized := normalizeLineEndings(content)
+		if err = os.WriteFile(s.configPath, []byte(normalized), 0o600); err != nil {
+			return fmt.Errorf("postgres store: write config to spool: %w", err)
 		}
-	}
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("postgres store: commit config: %w", err)
-	}
-	if err = os.MkdirAll(filepath.Dir(s.configPath), 0o700); err != nil {
-		return fmt.Errorf("postgres store: prepare config directory: %w", err)
-	}
-	if err = os.WriteFile(s.configPath, []byte(normalized), 0o600); err != nil {
-		return fmt.Errorf("postgres store: write config to spool: %w", err)
 	}
 	return nil
 }
