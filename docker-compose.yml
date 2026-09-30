@@ -10,9 +10,13 @@ services:
     container_name: cli-proxy-api
     environment:
       DEPLOY: cloud
+      MANAGEMENT_PASSWORD: ${MANAGEMENT_PASSWORD:-}
+      CLI_PROXY_API_KEYS_JSON: ${CLI_PROXY_API_KEYS_JSON:-}
+      CLI_PROXY_CONFIG_YAML: ${CLI_PROXY_CONFIG_YAML:-}
     ports:
       - "8317:8317"
     volumes:
       - "../files/auths:/root/.cli-proxy-api"
       - "../files/logs:/CLIProxyAPI/logs"
+      - "../files/plugins:/CLIProxyAPI/plugins"
     restart: unless-stopped
