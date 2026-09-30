@@ -7,12 +7,13 @@
 | 变量 | 用途 |
 | --- | --- |
 | `MANAGEMENT_PASSWORD` | 管理页面登录密钥，必填。 |
+| `CLI_PROXY_CONFIG_B64` | 可选，将完整 YAML 配置编码为单行 Base64；适合 Dokploy 的单行变量输入框。设置后优先于下面两项。 |
 | `CLI_PROXY_API_KEYS_JSON` | 客户端 API Key 的 JSON 数组，例如 `["key-1","key-2"]`。使用简易配置时必填。 |
-| `CLI_PROXY_CONFIG_YAML` | 可选，完整的 v8 YAML 配置。设置后优先于 `CLI_PROXY_API_KEYS_JSON`。 |
+| `CLI_PROXY_CONFIG_YAML` | 可选，完整的 YAML 配置；可直接填写多行。设置后优先于 `CLI_PROXY_API_KEYS_JSON`。 |
 
 简易配置会启用 8317 端口、远程管理页面，并将 OAuth 认证文件放在 `/root/.cli-proxy-api`。管理密钥由程序原生支持的 `MANAGEMENT_PASSWORD` 读取。`../files/auths`、`../files/logs` 和 `../files/plugins` 挂载为持久化目录，路径相对于 Compose 文件所在目录；如果 Dokploy 的工作目录不同，请按实际位置调整。
 
-如需保留旧 `config.yaml` 中的其他设置，将其内容迁移到 `CLI_PROXY_CONFIG_YAML`，建议采用 [config.example.yaml](config.example.yaml) 的 v8 格式。至少包含以下配置，并按需补充其他设置：
+如需保留旧 `config.yaml` 中的其他设置，使用 `CLI_PROXY_CONFIG_B64` 或 `CLI_PROXY_CONFIG_YAML`。旧格式仍被 v8 后端兼容；新配置建议采用 [config.example.yaml](config.example.yaml) 的 v8 格式。至少包含以下配置，并按需补充其他设置：
 
 ```yaml
 config-version: 8
