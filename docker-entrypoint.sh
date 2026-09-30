@@ -3,6 +3,7 @@ set -eu
 
 umask 077
 : "${CLI_PROXY_PORT:=8318}"
+export CLI_PROXY_PORT
 
 if [ -z "${MANAGEMENT_PASSWORD:-}" ]; then
   echo 'Set MANAGEMENT_PASSWORD in Dokploy to enable the management page.' >&2
