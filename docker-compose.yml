@@ -9,12 +9,16 @@ services:
         BUILD_DATE: ${BUILD_DATE:-unknown}
     environment:
       DEPLOY: cloud
-      PGSTORE_DSN: "postgresql://lijiahua%40looplaygame.com:LooPlay2026@cpaupdate-cpadb-ziwqd5:5432/postgres?sslmode=disable"
-      PGSTORE_SCHEMA: "public"
+      CLI_PROXY_PORT: ${CLI_PROXY_PORT:-8318}
+      PGSTORE_DSN: ${PGSTORE_DSN:?Set PGSTORE_DSN in Dokploy}
+      PGSTORE_SCHEMA: ${PGSTORE_SCHEMA:-public}
+      MANAGEMENT_PASSWORD: ${MANAGEMENT_PASSWORD:-}
+      CLI_PROXY_CONFIG_B64: ${CLI_PROXY_CONFIG_B64:-}
+      CLI_PROXY_API_KEYS_JSON: ${CLI_PROXY_API_KEYS_JSON:-}
+      CLI_PROXY_CONFIG_YAML: ${CLI_PROXY_CONFIG_YAML:-}
     ports:
       - "8318:8318"
     volumes:
-      - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml
       - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
       - "../files/logs:/CLIProxyAPI/logs"
       - ${CLI_PROXY_PLUGIN_PATH:-./plugins}:/CLIProxyAPI/plugins
